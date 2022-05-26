@@ -1,0 +1,87 @@
+# lol Windows won't execute things that don't end in .exe
+
+rule glslc
+  depfile = $out.d
+  deps = gcc
+  command = glslc $in -o $out -MD -MF $depfile -O -fshader-stage=$stage --target-env=vulkan1.2 -x glsl
+
+rule c
+  depfile = $out.d
+  deps = gcc
+  command = clang $in -o $out -MD -MF $depfile -O3 -march=native -c -ggdb -std=c18 -Wall -Wno-unused-function -Wno-missing-braces -ferror-limit=1 $cflags
+
+rule l
+  command = clang $in -o $out $lflags
+rule lib
+  command = lib $in /OUT:$out $libflags
+
+build vert.spv: glslc txt.vert
+  stage = vertex
+build frag.spv: glslc txt.frag
+  stage = fragment
+
+cflagswin = -D_CRT_SECURE_NO_WARNINGS -Wno-unknown-pragmas
+
+build f2c.o: c f2c.c
+  cflags = $cflagswin
+build f2c.exe: l f2c.o
+
+rule f2c
+  command = ./f2c.exe $in $out $ident
+
+build vert.spv.h: f2c vert.spv | f2c.exe
+  ident = vertSPV
+build frag.spv.h: f2c frag.spv | f2c.exe
+  ident = fragSPV
+build font.pbm.h: f2c font.pbm | f2c.exe
+  ident = fontPBM
+
+build swizzles.o: c swizzles.c
+  cflags = -Wno-char-subscripts $cflagswin
+build swizzles.exe: l swizzles.o
+
+rule swizzles
+  command = ./swizzles.exe $out
+
+build swizzles.h: swizzles | swizzles.exe
+
+build generated: phony vert.spv.h frag.spv.h font.pbm.h swizzles.h
+
+build debugtests.o: c debugtests.c
+build debugtests.exe: l debugtests.o
+
+build txtquad.o: c txtquad.c | glfw vulkan generated
+  cflags = -Iglfw/include -Ivulkan/include -fPIC
+build txtquad_win.o: c txtquad.c | glfw vulkan generated
+  cflags = -Iglfw\include -Ivulkan\Include $cflagswin
+
+build libtxtquad.so: l txtquad.o | glfw vulkan
+  lflags = -Lglfw/lib -lglfw -Lvulkan/lib -lvulkan -lX11 -shared
+build txtquad.lib: lib txtquad_win.o | glfw vulkan
+  libflags = /LIBPATH:glfw\lib glfw3.lib /LIBPATH:vulkan\Lib vulkan-1.lib
+
+lflagslin = -lm -Wl,-rpath,.
+lflagswin = -lmsvcrt -luser32 -lshell32 -lgdi32 -Wl,-nodefaultlib:libcmt
+
+build demo.o: c demo.c
+build demo_win.o: c demo.c
+  cflags = $cflagswin
+
+build demo: l demo.o | libtxtquad.so
+  lflags = -L. -ltxtquad $lflagslin
+build demo.exe: l demo_win.o | txtquad.lib
+  lflags = -L. -ltxtquad $lflagswin
+
+build font.o: c font.c
+build font_win.o: c font.c
+  cflags = $cflagswin
+
+build font: l font.o | libtxtquad.so
+  lflags = -L. -ltxtquad $lflagslin
+build font.exe: l font_win.o | txtquad.lib
+  lflags = -L. -ltxtquad $lflagswin
+
+build lin: phony demo     font
+build win: phony demo.exe font.exe
+
+default lin
